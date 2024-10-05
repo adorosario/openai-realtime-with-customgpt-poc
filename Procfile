@@ -1,1 +1,1 @@
-web: uvicorn main:app --port=5050
+web: uvicorn main:app

@@ -25,6 +25,7 @@ starlette==0.38.6
 twilio==9.3.2
 typing_extensions==4.12.2
 urllib3==2.2.3
+uvicorn==0.30.6
 websockets==13.1
 yarl==1.12.1
 customgpt_client

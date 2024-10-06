@@ -191,7 +191,7 @@ async def send_session_update(openai_ws):
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "The cleaned users query payload should fully describe the users question"
+                                "description": "The elaborated user query payload should fully describe the users question"
                             }
                         },
                         "required": ["query"]

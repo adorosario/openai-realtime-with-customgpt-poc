@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from customgpt_client import CustomGPT
 import uuid
 import logging
+import time
 
 load_dotenv()
 
@@ -32,9 +33,10 @@ SYSTEM_MESSAGE_2 = (
 
 VOICE = 'alloy'
 LOG_EVENT_TYPES = [
-    'response.content.done', 'rate_limits.updated', 'response.done',
+    'response.content.done', 'response.done',
     'input_audio_buffer.committed', 'input_audio_buffer.speech_stopped',
-    'input_audio_buffer.speech_started', 'session.created'
+    'input_audio_buffer.speech_started', 'session.created', 'response.audio.done',
+    'conversation.item.truncated'
 ]
 
 app = FastAPI()
@@ -65,7 +67,6 @@ async def handle_media_stream(websocket: WebSocket, session_id: str):
     logger.info(f"WebSocket connection attempt. Session ID: {session_id}")
     await websocket.accept()
     logger.info(f"WebSocket connection accepted. Session ID: {session_id}")
-
     try:
         async with websockets.connect(
             'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
@@ -76,6 +77,7 @@ async def handle_media_stream(websocket: WebSocket, session_id: str):
         ) as openai_ws:
             await send_session_update(openai_ws)
             stream_sid = None
+            done_response = {"event_id": None}
             
             async def receive_from_twilio():
                 nonlocal stream_sid
@@ -101,6 +103,7 @@ async def handle_media_stream(websocket: WebSocket, session_id: str):
 
             async def send_to_twilio():
                 nonlocal stream_sid
+                nonlocal done_response
                 try:
                     async for openai_message in openai_ws:
                         response = json.loads(openai_message)
@@ -108,6 +111,14 @@ async def handle_media_stream(websocket: WebSocket, session_id: str):
                             logger.info(f"Received event: {response['type']}::{response}")
                         if response['type'] == 'session.updated':
                             logger.info(f"Session updated successfully: {response}")
+                        if response['type'] == "input_audio_buffer.speech_started":
+                            logger.info(f"Input Audio Detected::{response}")
+                            audio_delta = {
+                              'streamSid': stream_sid,
+                              'event': 'clear',
+                            }
+                            await websocket.send_json(audio_delta)
+                            await openai_ws.send(json.dumps({"type": "response.create"}))
                         if response['type'] == 'response.audio.delta' and response.get('delta'):
                             try:
                                 audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
@@ -118,11 +129,12 @@ async def handle_media_stream(websocket: WebSocket, session_id: str):
                                         "payload": audio_payload
                                     }
                                 }
-                                await asyncio.wait_for(websocket.send_json(audio_delta), timeout=5.0)
+                                await websocket.send_json(audio_delta)
                             except asyncio.TimeoutError:
                                 logger.error("Timeout while sending audio data to Twilio")
                             except Exception as e:
                                 logger.error(f"Error processing audio data: {e}")
+
                         elif response['type'] == 'response.function_call_arguments.done':
                             function_name = response['name']
                             call_id = response['call_id']
@@ -140,6 +152,7 @@ async def handle_media_stream(websocket: WebSocket, session_id: str):
                                 }
                                 await openai_ws.send(json.dumps(function_response))
                                 await openai_ws.send(json.dumps({"type": "response.create"}))
+
                 except WebSocketDisconnect:
                     logger.info(f"OpenAI WebSocket disconnected. Session ID: {session_id}")
                 except Exception as e:
@@ -152,13 +165,12 @@ async def handle_media_stream(websocket: WebSocket, session_id: str):
         logger.error(f"Unexpected error in handle_media_stream: {e}")
     finally:
         try:
-            await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
+            await websocket.close()
         except RuntimeError:
-            logger.info(f"WebSocket already closed. Session ID: {session_id}")
-        logger.info(f"WebSocket connection closed. Session ID: {session_id}")
+            logger.info(f"WebSocket connection closed. Session ID: {session_id}")
 
 def get_additional_context(query, session_id):
-    conversation = CustomGPT.Conversation.send(project_id=project_id, session_id=session_id, prompt=query)
+    conversation = CustomGPT.Conversation.send(project_id=project_id, session_id=session_id, prompt=query, custom_persona="Do try your best to answer if you think user query feels similar to something you have in knowledge base. Match similar words to your knowledge base and answer as the user_query is audio transcript there can be mistakes in transcription process.")
     return f"{conversation.parsed.data.openai_response}"
 
 async def send_session_update(openai_ws):
@@ -187,7 +199,7 @@ async def send_session_update(openai_ws):
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "The cleaned users query payload should fully describe the users question"
+                                "description": "The elaborated user query payload should fully describe the users question"
                             }
                         },
                         "required": ["query"]

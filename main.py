@@ -19,11 +19,13 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
 SYSTEM_MESSAGE_2 = (
     "You are a helpful AI assistant designed to answer questions using only the additional context provided only respond to greeting without function call."
-    "For every user query, evaluate the user_query clearly, clean it of any vocablary issues and elaborate it than pass detailed user_query immediately to get_additional_context function to obtain information. "
+    "For every user query, Take the following user query and provide a more detailed, context-rich version of it. Expand on the intent and purpose behind the question, adding depth, specificity, and clarity."
+    "Tailor the expanded query as if the user were asking an expert in the relevant field, and include any relevant contextual details that would help make the request more comprehensive."
+    "The goal is to enhance the query, making it clearer and more informative while maintaining the original intent."
+    "Now, using this approach, elaborate the user query than pass detailed user_query immediately to get_additional_context function to obtain information. "
     "Do not use your own knowledge base to answer questions. "
     "Always base your responses solely on the information returned by get_additional_context. "
     "If get_additional_context returns information indicating it's unable to answer or provide details, "
-    "respond only with: 'Sorry! I can't provide an answer to your question.' "
     "Do not elaborate or use any other information beyond what get_additional_context provides. "
     "If get_additional_context provides relevant information, incorporate it into your response. "
     "Be concise and directly address the user's query based only on the additional context. "
@@ -119,7 +121,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                               'event': 'clear',
                             }
                             await websocket.send_json(audio_delta)
-                            await openai_ws.send(json.dumps({"type": "response.create"}))
+                            await openai_ws.send(json.dumps({"type": "response.cancel"}))
                         if response['type'] == 'response.audio.delta' and response.get('delta'):
                             try:
                                 audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
@@ -189,19 +191,19 @@ async def send_session_update(openai_ws):
             "temperature": 0.6,
             "tools": [
                 {
-                    "type": "function",
-                    "name": "get_additional_context",
-                    "description": "Get the additional context to answer user query.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "query": {
-                                "type": "string",
-                                "description": "The elaborated user query payload should fully describe the users question"
-                            }
-                        },
-                        "required": ["query"]
-                    }
+                  "type": "function",
+                  "name": "get_additional_context",
+                  "description": "Elaborate on the user's original query, providing additional context, specificity, and clarity to create a more detailed, expert-level question. The function should transform a simple query into a richer and more informative version that is suitable for an expert to answer.",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "query": {
+                        "type": "string",
+                        "description": "The elaborated user query. This should fully describe the user's original question, adding depth, context, and clarity. Tailor the expanded query as if the user were asking an expert in the relevant field, providing necessary background or related subtopics that may help inform the response."
+                      }
+                    },
+                    "required": ["query"]
+                  }
                 }
             ]
         }

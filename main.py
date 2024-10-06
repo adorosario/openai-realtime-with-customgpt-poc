@@ -181,7 +181,10 @@ async def send_session_update(openai_ws):
         "type": "session.update",
         "session": {
             "turn_detection": {
-                "type": "server_vad"
+                "type": "server_vad",
+                "threshold": 0.6,
+                "prefix_padding_ms": 300,
+                "silence_duration_ms": 500
             },
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",

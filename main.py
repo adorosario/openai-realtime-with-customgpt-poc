@@ -14,7 +14,6 @@ import time
 
 load_dotenv()
 
-project_id = 43538
 CustomGPT.api_key = os.getenv('CUSTOMGPT_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
@@ -51,8 +50,10 @@ async def index_page():
     return "<h1>Twilio Media Stream Server is running!</h1>"
 
 @app.api_route("/incoming-call", methods=["GET", "POST"])
-async def handle_incoming_call(request: Request):
+async def handle_incoming_call(request: Request, project_id:int):
     session_id = str(uuid.uuid4())
+    project_id = project_id
+    logger.info(f"Project::{project_id}")
     logger.info(f"Incoming call handled. Session ID: {session_id}")
     response = VoiceResponse()
     response.pause(length=1)

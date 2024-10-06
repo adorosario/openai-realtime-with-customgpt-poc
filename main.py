@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from customgpt_client import CustomGPT
 import uuid
 import logging
+import time
 
 load_dotenv()
 
@@ -108,6 +109,8 @@ async def handle_media_stream(websocket: WebSocket, session_id: str):
                             logger.info(f"Received event: {response['type']}::{response}")
                         if response['type'] == 'session.updated':
                             logger.info(f"Session updated successfully: {response}")
+                        if response['type'] == 'input_audio_buffer.speech_started':
+                            logger.info(f"Audio Detected successfully: {response}")
                         if response['type'] == 'response.audio.delta' and response.get('delta'):
                             try:
                                 audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
@@ -123,6 +126,7 @@ async def handle_media_stream(websocket: WebSocket, session_id: str):
                                 logger.error("Timeout while sending audio data to Twilio")
                             except Exception as e:
                                 logger.error(f"Error processing audio data: {e}")
+                                raise Exception(f"Error processing audio data: {e}")
                         elif response['type'] == 'response.function_call_arguments.done':
                             function_name = response['name']
                             call_id = response['call_id']
@@ -158,7 +162,7 @@ async def handle_media_stream(websocket: WebSocket, session_id: str):
         logger.info(f"WebSocket connection closed. Session ID: {session_id}")
 
 def get_additional_context(query, session_id):
-    conversation = CustomGPT.Conversation.send(project_id=project_id, session_id=session_id, prompt=query)
+    conversation = CustomGPT.Conversation.send(project_id=project_id, session_id=session_id, prompt=query, custom_persona="Do try your best to answer if you think user query feels similar to something you have in knowledge base.")
     return f"{conversation.parsed.data.openai_response}"
 
 async def send_session_update(openai_ws):
@@ -176,7 +180,7 @@ async def send_session_update(openai_ws):
             "voice": VOICE,
             "instructions": SYSTEM_MESSAGE_2,
             "modalities": ["text", "audio"],
-            "temperature": 0.6,
+            "temperature": 0,
             "tools": [
                 {
                     "type": "function",

@@ -58,12 +58,12 @@ async def handle_incoming_call(request: Request):
     response.pause(length=1)
     host = request.url.hostname
     connect = Connect()
-    connect.stream(url=f'wss://{host}/media-stream/{session_id}')
+    connect.stream(url=f'wss://{host}/media-stream/project/{project_id}/session/{session_id}')
     response.append(connect)
     return HTMLResponse(content=str(response), media_type="application/xml")
 
-@app.websocket("/media-stream/{session_id}")
-async def handle_media_stream(websocket: WebSocket, session_id: str):
+@app.websocket("/media-stream/project/{project_id}/session/{session_id}")
+async def handle_media_stream(websocket: WebSocket, project_id: int, session_id: str):
     logger.info(f"WebSocket connection attempt. Session ID: {session_id}")
     await websocket.accept()
     logger.info(f"WebSocket connection accepted. Session ID: {session_id}")
@@ -140,7 +140,7 @@ async def handle_media_stream(websocket: WebSocket, session_id: str):
                             call_id = response['call_id']
                             arguments = json.loads(response['arguments'])
                             if function_name == 'get_additional_context':
-                                result = get_additional_context(arguments['query'], session_id)
+                                result = get_additional_context(arguments['query'], project_id, session_id)
                                 logger.info(f"CustomGPT response: {result}")
                                 function_response = {
                                     "type": "conversation.item.create",
@@ -169,7 +169,7 @@ async def handle_media_stream(websocket: WebSocket, session_id: str):
         except RuntimeError:
             logger.info(f"WebSocket connection closed. Session ID: {session_id}")
 
-def get_additional_context(query, session_id):
+def get_additional_context(query, project_id, session_id):
     conversation = CustomGPT.Conversation.send(project_id=project_id, session_id=session_id, prompt=query, custom_persona="Do try your best to answer if you think user query feels similar to something you have in knowledge base. Match similar words to your knowledge base and answer as the user_query is audio transcript there can be mistakes in transcription process.")
     return f"{conversation.parsed.data.openai_response}"
 

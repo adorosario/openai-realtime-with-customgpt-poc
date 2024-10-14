@@ -1,6 +1,6 @@
-#  Speech Assistant with Twilio Voice and the OpenAI Realtime API (Python)
+# CustomGPT with Twilio Voice and the OpenAI Realtime API (Python)
 
-This application demonstrates how to use Python, [Twilio Voice](https://www.twilio.com/docs/voice) and [Media Streams](https://www.twilio.com/docs/voice/media-streams), and [OpenAI's Realtime API](https://platform.openai.com/docs/) to make a phone call to speak with an AI Assistant. 
+This application demonstrates how to use Python, [Twilio Voice](https://www.twilio.com/docs/voice) and [Media Streams](https://www.twilio.com/docs/voice/media-streams), and [OpenAI's Realtime API](https://platform.openai.com/docs/) to make a phone call to speak with an CustomGPT. 
 
 The application opens websockets with the OpenAI Realtime API and Twilio, and sends voice audio from one to the other to enable a two-way conversation.
 
@@ -19,6 +19,7 @@ To use the app, you will  need:
 - **A Twilio number with _Voice_ capabilities.** [Here are instructions](https://help.twilio.com/articles/223135247-How-to-Search-for-and-Buy-a-Twilio-Phone-Number-from-Console) to purchase a phone number.
 - **An OpenAI account and an OpenAI API Key.** You can sign up [here](https://platform.openai.com/).
   - **OpenAI Realtime API access.**
+- **A CustomGPT API Key** You can sign up [here](https://app.customgpt.ai) 
 
 ## Local Setup
 
@@ -80,7 +81,7 @@ In the .env file, update the `OPENAI_API_KEY` to your OpenAI API key from the **
 ## Run the app
 Once ngrok is running, dependencies are installed, Twilio is configured properly, and the `.env` is set up, run the dev server with the following command:
 ```
-python main.py
+gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app
 ```
 ## Test the app
 With the development server running, call the phone number you purchased in the **Prerequisites**. After the introduction, you should be able to talk to the AI Assistant. Have fun!

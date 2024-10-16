@@ -1,8 +1,8 @@
-# CustomGPT with Twilio Voice and the OpenAI Realtime API (Python)
+# OpenAI Realtime API with CustomGPT RAG and Twilio Voice
 
-This application demonstrates how to use Python, [Twilio Voice](https://www.twilio.com/docs/voice) and [Media Streams](https://www.twilio.com/docs/voice/media-streams), and [OpenAI's Realtime API](https://platform.openai.com/docs/) to make a phone call to speak with an CustomGPT. 
+This application demonstrates how to use [Twilio Voice](https://www.twilio.com/docs/voice) and [Media Streams](https://www.twilio.com/docs/voice/media-streams), and [OpenAI's Realtime API](https://platform.openai.com/docs/) to make a phone call to speak with an [CustomGPT RAG](https://customgpt.ai/) Knowledgebase. 
 
-The application opens websockets with the OpenAI Realtime API and Twilio, and sends voice audio from one to the other to enable a two-way conversation.
+The application opens websockets with the OpenAI Realtime API and Twilio, and sends voice audio from one to the other to enable a two-way conversation. It uses OpenAI's function calling to call CustomGPT to get the ground-truth information from the RAG (retrieval augmented generation). 
 
 See [here](https://www.twilio.com/en-us/voice-ai-assistant-openai-realtime-api-python) for a tutorial overview of the code.
 
@@ -14,12 +14,12 @@ This application uses the following Twilio products in conjuction with OpenAI's 
 
 To use the app, you will  need:
 
-- **Python 3.9+** We used \`3.19.3\` for development; download from [here](https://www.python.org/downloads/).
-- **A Twilio account.** You can sign up for a free trial [here](https://www.twilio.com/try-twilio).
-- **A Twilio number with _Voice_ capabilities.** [Here are instructions](https://help.twilio.com/articles/223135247-How-to-Search-for-and-Buy-a-Twilio-Phone-Number-from-Console) to purchase a phone number.
+- **A Twilio account.** You can sign up for a free trial [here](https://www.twilio.com/try-twilio) and [buy a number](https://help.twilio.com/articles/223135247-How-to-Search-for-and-Buy-a-Twilio-Phone-Number-from-Console) to purchase a phone number.
 - **An OpenAI account and an OpenAI API Key.** You can sign up [here](https://platform.openai.com/).
-  - **OpenAI Realtime API access.**
 - **A CustomGPT API Key** You can sign up [here](https://app.customgpt.ai) 
+
+## Docker Setup
+The easiest way to setup is using Docker. Please see [step-by-step instructions](./DOCKER.md). 
 
 ## Local Setup
 
@@ -37,13 +37,12 @@ Open a Terminal and run:
 ```
 ngrok http 5050
 ```
-Once the tunnel has been opened, copy the `Forwarding` URL. It will look something like: `https://[your-ngrok-subdomain].ngrok.app`. You will
-need this when configuring your Twilio number setup.
 
-Note that the `ngrok` command above forwards to a development server running on port `5050`, which is the default port configured in this application. If
-you override the `PORT` defined in `index.js`, you will need to update the `ngrok` command accordingly.
+Once the tunnel has been opened, copy the `Forwarding` URL. It will look something like: `https://[your-ngrok-subdomain].ngrok.app`. You will need this when configuring your Twilio number setup.
 
-Keep in mind that each time you run the `ngrok http` command, a new URL will be created, and you'll need to update it everywhere it is referenced below.
+Note that the `ngrok` command above forwards to a development server running on port `5050`, which is the default port configured in this application. If you override the `PORT`, you will need to update the `ngrok` command accordingly.
+
+Keep in mind that each time you run the `ngrok http` command, a new URL will be created, and you'll need to update it everywhere it is referenced below. It is recommended to set a static domain in ngrok. 
 
 ### (Optional) Create and use a virtual environment
 
@@ -70,18 +69,19 @@ In your Phone Number configuration settings, update the first **A call comes in*
 
 ### Update the .env file
 
-Create a `/env` file, or copy the `.env.example` file to `.env`:
+Copy the `.env.example` file to `.env`:
 
 ```
 cp .env.example .env
 ```
 
-In the .env file, update the `OPENAI_API_KEY` to your OpenAI API key from the **Prerequisites**.
+In the .env file, update the various keys from the **Prerequisites**.
 
 ## Run the app
 Once ngrok is running, dependencies are installed, Twilio is configured properly, and the `.env` is set up, run the dev server with the following command:
 ```
 gunicorn -w 4 -k uvicorn.workers.UvicornWorker main:app
 ```
+
 ## Test the app
 With the development server running, call the phone number you purchased in the **Prerequisites**. After the introduction, you should be able to talk to the AI Assistant. Have fun!

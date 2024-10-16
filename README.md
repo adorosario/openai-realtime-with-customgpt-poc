@@ -10,6 +10,12 @@ This application uses the following Twilio products in conjuction with OpenAI's 
 - Voice (and TwiML, Media Streams)
 - Phone Numbers
 
+## Demo Video
+
+[![Watch the video](https://cdn.loom.com/sessions/thumbnails/d0d4f4490a4349cdab860febce26d1bc-aa0a9773bdb9dca7-full-play.gif)](https://www.loom.com/share/d0d4f4490a4349cdab860febce26d1bc)
+
+[Click here to watch the full demo video](https://www.loom.com/share/d0d4f4490a4349cdab860febce26d1bc)
+
 ## Prerequisites
 
 To use the app, you will  need:

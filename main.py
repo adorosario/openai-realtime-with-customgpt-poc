@@ -57,8 +57,11 @@ async def index_page():
 
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request, project_id:int):
-    session_id = str(uuid.uuid4())
     project_id = project_id
+    form_data = await request.form() if request.method == "POST" else request.query_params
+    caller_number = form_data.get('From', 'Unknown')
+    logger.info(f"Caller: {caller_number}")
+    session_id = create_session(project_id, caller_number)
     logger.info(f"Project::{project_id}")
     logger.info(f"Incoming call handled. Session ID: {session_id}")
     response = VoiceResponse()
@@ -147,8 +150,13 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                             call_id = response['call_id']
                             arguments = json.loads(response['arguments'])
                             if function_name == 'get_additional_context':
+                                logger.info("CustomGPT Started")
+                                start_time = time.time()
                                 result = get_additional_context(arguments['query'], project_id, session_id)
+                                end_time = time.time()
+                                elapsed_time = end_time - start_time
                                 logger.info(f"CustomGPT response: {result}")
+                                logger.info(f"get_additional_context execution time: {elapsed_time:.4f} seconds")
                                 function_response = {
                                     "type": "conversation.item.create",
                                     "item": {
@@ -232,3 +240,7 @@ async def send_session_update(openai_ws):
     }
     await openai_ws.send(json.dumps(initial_response))
     await openai_ws.send(json.dumps({"type": "response.create"}))
+
+def create_session(project_id, caller_number):
+    session = CustomGPT.Conversation.create(project_id=project_id, name=caller_number)
+    return session.parsed.data.session_id

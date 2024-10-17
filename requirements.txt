@@ -30,3 +30,4 @@ websockets==13.1
 yarl==1.12.1
 customgpt_client
 gunicorn
+python-multipart

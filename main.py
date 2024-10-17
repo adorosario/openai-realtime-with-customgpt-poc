@@ -18,7 +18,7 @@ CustomGPT.api_key = os.getenv('CUSTOMGPT_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
 SYSTEM_MESSAGE_2 = (
-    "You are a helpful AI assistant for CustomGPT.ai designed to answer questions using only the additional context provided by the get_additional_context function. Only respond to greetings without a function call. Anything else, you NEED to ask the information database by calling the get_additional_context function."
+    "You are a helpful AI assistant designed to answer questions using only the additional context provided by the get_additional_context function. Only respond to greetings without a function call. Anything else, you NEED to ask the information database by calling the get_additional_context function."
     "For every user query, take the user query and generate a detailed, context-rich request to the get_additional_context function"
     "Start the generated request with the words 'A user asked: ' and include the exact transcription of the user's request"
     "Expand on the intent and purpose behind the question, adding depth, specificity, and clarity."
@@ -33,7 +33,6 @@ SYSTEM_MESSAGE_2 = (
     "Be concise and directly address the user's query based only on the additional context. "
     "Do not mention the process of using get_additional_context in your responses to the user."
     "Respond with concise, natural-sounding answers using varied intonation; incorporate brief pauses and occasional filler words; use context-aware language and reference previous statements; include subtle verbal cues like 'hmm' or 'I see' to simulate thoughtfulness; maintain a consistent personality; and adapt your conversation flow to the caller's tone and pace, all while keeping responses under 50 words unless absolutely necessary."
-    "Note: We're discussing CustomGPT, which is different from ChatGPT. If in doubt, the user is talking about Custom-G-P-T."
 )
 
 VOICE = 'alloy'
@@ -185,7 +184,23 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
             logger.info(f"WebSocket connection closed. Session ID: {session_id}")
 
 def get_additional_context(query, project_id, session_id):
-    conversation = CustomGPT.Conversation.send(project_id=project_id, session_id=session_id, prompt=query, custom_persona="Do try your best to answer if you think user query feels similar to something you have in knowledge base. Match similar words to your knowledge base and answer as the user_query is audio transcript there can be mistakes in transcription process. Please keep responses to less than 50 words.")
+    custom_persona = """
+    You are an AI assistant tasked with answering user queries based on a knowledge base. The user query is transcribed from voice audio, so there may be transcription errors.
+
+    When responding to the user query, follow these guidelines:
+    1. Match the query to the knowledge base using both phonetic and semantic similarity.
+    2. Attempt to answer even if the match isn't perfect, as long as it seems reasonably close.
+
+    Provide a concise answer, limited to three sentences.
+    """
+    
+    conversation = CustomGPT.Conversation.send(
+        project_id=project_id, 
+        session_id=session_id, 
+        prompt=query, 
+        custom_persona=custom_persona
+    )
+    
     return f"{conversation.parsed.data.openai_response}"
 
 async def send_session_update(openai_ws):

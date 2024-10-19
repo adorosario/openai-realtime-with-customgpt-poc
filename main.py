@@ -62,7 +62,7 @@ if not OPENAI_API_KEY:
 @app.get("/", response_class=HTMLResponse)
 async def index_page():
     return "<h1>Twilio Media Stream Server is running!</h1>"
-print(CustomGPT.api_key)
+
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request, project_id: int, api_key: Optional[str] = None):
     if api_key:

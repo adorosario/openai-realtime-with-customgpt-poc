@@ -5,12 +5,19 @@ import asyncio
 import websockets
 from fastapi import FastAPI, WebSocket, Request, WebSocketDisconnect, status
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from typing import Optional
+
 from twilio.twiml.voice_response import VoiceResponse, Connect
 from dotenv import load_dotenv
 from customgpt_client import CustomGPT
 import uuid
 import logging
 import time
+current_dir = os.path.dirname(__file__)
+
+# Path to the MP3 file in the static folder
+mp3_file_path = os.path.join(current_dir, "static", "typing.wav")
 
 load_dotenv()
 
@@ -40,10 +47,12 @@ LOG_EVENT_TYPES = [
     'response.content.done', 'response.done',
     'input_audio_buffer.committed', 'input_audio_buffer.speech_stopped',
     'input_audio_buffer.speech_started', 'session.created', 'response.audio.done',
-    'conversation.item.truncated'
+    'conversation.item.input_audio_transcription.completed'
 ]
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -53,10 +62,12 @@ if not OPENAI_API_KEY:
 @app.get("/", response_class=HTMLResponse)
 async def index_page():
     return "<h1>Twilio Media Stream Server is running!</h1>"
-
+print(CustomGPT.api_key)
 @app.api_route("/incoming-call", methods=["GET", "POST"])
-async def handle_incoming_call(request: Request, project_id:int):
-    project_id = project_id
+async def handle_incoming_call(request: Request, project_id: int, api_key: Optional[str] = None):
+    if api_key:
+        CustomGPT.api_key = api_key
+
     form_data = await request.form() if request.method == "POST" else request.query_params
     caller_number = form_data.get('From', 'Unknown')
     logger.info(f"Caller: {caller_number}")
@@ -122,11 +133,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                             logger.info(f"Session updated successfully: {response}")
                         if response['type'] == "input_audio_buffer.speech_started":
                             logger.info(f"Input Audio Detected::{response}")
-                            audio_delta = {
-                              'streamSid': stream_sid,
-                              'event': 'clear',
-                            }
-                            await websocket.send_json(audio_delta)
+                            await clear_buffer(websocket, stream_sid)
                             await openai_ws.send(json.dumps({"type": "response.cancel"}))
                         if response['type'] == 'response.audio.delta' and response.get('delta'):
                             try:
@@ -142,16 +149,18 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                             except asyncio.TimeoutError:
                                 logger.error("Timeout while sending audio data to Twilio")
                             except Exception as e:
-                                logger.error(f"Error processing audio data: {e}")
-
-                        elif response['type'] == 'response.function_call_arguments.done':
+                                logger.error(f"Error processing audio data: {e}")                            
+                        if response['type'] == 'response.function_call_arguments.done':
                             function_name = response['name']
                             call_id = response['call_id']
                             arguments = json.loads(response['arguments'])
                             if function_name == 'get_additional_context':
+                                await play_typing(websocket, stream_sid)
                                 logger.info("CustomGPT Started")
                                 start_time = time.time()
                                 result = get_additional_context(arguments['query'], project_id, session_id)
+                                logger.info(f"Clear Audio::Additional Context gained")
+                                await clear_buffer(websocket, stream_sid)
                                 end_time = time.time()
                                 elapsed_time = end_time - start_time
                                 logger.info(f"CustomGPT response: {result}")
@@ -219,6 +228,7 @@ async def send_session_update(openai_ws):
             "instructions": SYSTEM_MESSAGE_2,
             "modalities": ["text", "audio"],
             "temperature": 0.6,
+            "input_audio_transcription": { "model": 'whisper-1' },
             "tools": [
                 {
                   "type": "function",
@@ -259,3 +269,24 @@ async def send_session_update(openai_ws):
 def create_session(project_id, caller_number):
     session = CustomGPT.Conversation.create(project_id=project_id, name=caller_number)
     return session.parsed.data.session_id
+
+async def play_typing(websocket, stream_sid):
+    with open(mp3_file_path, "rb") as mp3_file:
+        mp3_data = mp3_file.read()
+        base64_audio = base64.b64encode(mp3_data).decode('utf-8')
+
+    audio_delta = {
+        "event": "media",
+        "streamSid": stream_sid,
+        "media": {
+            "payload": base64_audio
+        }
+    }
+    await websocket.send_json(audio_delta)
+
+async def clear_buffer(websocket, stream_sid):
+    audio_delta = {
+      'streamSid': stream_sid,
+      'event': 'clear',
+    }
+    await websocket.send_json(audio_delta)

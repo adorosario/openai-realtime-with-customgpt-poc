@@ -228,7 +228,6 @@ async def send_session_update(openai_ws):
             "instructions": SYSTEM_MESSAGE_2,
             "modalities": ["text", "audio"],
             "temperature": 0.6,
-            "input_audio_transcription": { "model": 'whisper-1' },
             "tools": [
                 {
                   "type": "function",

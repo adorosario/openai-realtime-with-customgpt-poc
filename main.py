@@ -126,55 +126,61 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                 nonlocal done_response
                 try:
                     async for openai_message in openai_ws:
-                        response = json.loads(openai_message)
-                        if response['type'] in LOG_EVENT_TYPES:
-                            logger.info(f"Received event: {response['type']}::{response}")
-                        if response['type'] == 'session.updated':
-                            logger.info(f"Session updated successfully: {response}")
-                        if response['type'] == "input_audio_buffer.speech_started":
-                            logger.info(f"Input Audio Detected::{response}")
-                            await clear_buffer(websocket, stream_sid)
-                            await openai_ws.send(json.dumps({"type": "response.cancel"}))
-                        if response['type'] == 'response.audio.delta' and response.get('delta'):
-                            try:
-                                audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
-                                audio_delta = {
-                                    "event": "media",
-                                    "streamSid": stream_sid,
-                                    "media": {
-                                        "payload": audio_payload
-                                    }
-                                }
-                                await websocket.send_json(audio_delta)
-                            except asyncio.TimeoutError:
-                                logger.error("Timeout while sending audio data to Twilio")
-                            except Exception as e:
-                                logger.error(f"Error processing audio data: {e}")                            
-                        if response['type'] == 'response.function_call_arguments.done':
-                            function_name = response['name']
-                            call_id = response['call_id']
-                            arguments = json.loads(response['arguments'])
-                            if function_name == 'get_additional_context':
-                                await play_typing(websocket, stream_sid)
-                                logger.info("CustomGPT Started")
-                                start_time = time.time()
-                                result = get_additional_context(arguments['query'], project_id, session_id)
-                                logger.info(f"Clear Audio::Additional Context gained")
+                        try:
+                            response = json.loads(openai_message)
+                            if response['type'] in LOG_EVENT_TYPES:
+                                logger.info(f"Received event: {response['type']}::{response}")
+                            if response['type'] == 'session.updated':
+                                logger.info(f"Session updated successfully: {response}")
+                            if response['type'] == "input_audio_buffer.speech_started":
+                                logger.info(f"Input Audio Detected::{response}")
                                 await clear_buffer(websocket, stream_sid)
-                                end_time = time.time()
-                                elapsed_time = end_time - start_time
-                                logger.info(f"CustomGPT response: {result}")
-                                logger.info(f"get_additional_context execution time: {elapsed_time:.4f} seconds")
-                                function_response = {
-                                    "type": "conversation.item.create",
-                                    "item": {
-                                        "type": "function_call_output",
-                                        "call_id": call_id,
-                                        "output": result
+                                await openai_ws.send(json.dumps({"type": "response.cancel"}))
+                            if response['type'] == 'response.audio.delta' and response.get('delta'):
+                                try:
+                                    audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
+                                    audio_delta = {
+                                        "event": "media",
+                                        "streamSid": stream_sid,
+                                        "media": {
+                                            "payload": audio_payload
+                                        }
                                     }
-                                }
-                                await openai_ws.send(json.dumps(function_response))
-                                await openai_ws.send(json.dumps({"type": "response.create"}))
+                                    await websocket.send_json(audio_delta)
+                                except asyncio.TimeoutError:
+                                    logger.error("Timeout while sending audio data to Twilio")
+                                except Exception as e:
+                                    logger.error(f"Error processing audio data: {e}")                            
+                            if response['type'] == 'response.function_call_arguments.done':
+                                try:
+                                    function_name = response['name']
+                                    call_id = response['call_id']
+                                    arguments = json.loads(response['arguments'])
+                                    if function_name == 'get_additional_context':
+                                        await play_typing(websocket, stream_sid)
+                                        logger.info("CustomGPT Started")
+                                        start_time = time.time()
+                                        result = get_additional_context(arguments['query'], project_id, session_id)
+                                        logger.info(f"Clear Audio::Additional Context gained")
+                                        await clear_buffer(websocket, stream_sid)
+                                        end_time = time.time()
+                                        elapsed_time = end_time - start_time
+                                        logger.info(f"CustomGPT response: {result}")
+                                        logger.info(f"get_additional_context execution time: {elapsed_time:.4f} seconds")
+                                        function_response = {
+                                            "type": "conversation.item.create",
+                                            "item": {
+                                                "type": "function_call_output",
+                                                "call_id": call_id,
+                                                "output": result
+                                            }
+                                        }
+                                        await openai_ws.send(json.dumps(function_response))
+                                        await openai_ws.send(json.dumps({"type": "response.create"}))
+                                except json.JSONDecodeError as e:
+                                    logger.error(f"Error in json decode in function_call: {e}::{response}")
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Error in json decode of response: {e}::{openai_message}")
 
                 except WebSocketDisconnect:
                     logger.info(f"OpenAI WebSocket disconnected. Session ID: {session_id}")
@@ -186,6 +192,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
         logger.error(f"WebSocket connection closed unexpectedly. Session ID: {session_id}")
     except Exception as e:
         logger.error(f"Unexpected error in handle_media_stream: {e}")
+
     finally:
         try:
             await websocket.close()

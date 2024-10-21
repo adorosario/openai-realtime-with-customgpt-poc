@@ -20,8 +20,7 @@ current_dir = os.path.dirname(__file__)
 mp3_file_path = os.path.join(current_dir, "static", "typing.wav")
 
 load_dotenv()
-
-CustomGPT.api_key = os.getenv('CUSTOMGPT_API_KEY')
+CUSTOMGPT_API_KEY = os.getenv('CUSTOMGPT_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
 SYSTEM_MESSAGE_2 = (
@@ -65,26 +64,23 @@ async def index_page():
 
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(request: Request, project_id: int, api_key: Optional[str] = None):
-    if api_key:
-        CustomGPT.api_key = api_key
-
     form_data = await request.form() if request.method == "POST" else request.query_params
     caller_number = form_data.get('From', 'Unknown')
     logger.info(f"Caller: {caller_number}")
-    session_id = create_session(project_id, caller_number)
+    session_id = create_session(api_key, project_id, caller_number)
     logger.info(f"Project::{project_id}")
     logger.info(f"Incoming call handled. Session ID: {session_id}")
     response = VoiceResponse()
     response.pause(length=1)
     host = request.url.hostname
     connect = Connect()
-    connect.stream(url=f'wss://{host}/media-stream/project/{project_id}/session/{session_id}')
+    connect.stream(url=f'wss://{host}/media-stream/project/{project_id}/session/{session_id}/{api_key}')
     response.append(connect)
     return HTMLResponse(content=str(response), media_type="application/xml")
 
-@app.websocket("/media-stream/project/{project_id}/session/{session_id}")
-async def handle_media_stream(websocket: WebSocket, project_id: int, session_id: str):
-    logger.info(f"WebSocket connection attempt. Session ID: {session_id}")
+@app.websocket("/media-stream/project/{project_id}/session/{session_id}/{api_key}")
+async def handle_media_stream(websocket: WebSocket, project_id: int, session_id: str, api_key: str):
+    logger.info(f"WebSocket connection attempt. Session ID: {session_id}:: {api_key}")
     await websocket.accept()
     logger.info(f"WebSocket connection accepted. Session ID: {session_id}")
     try:
@@ -124,6 +120,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
             async def send_to_twilio():
                 nonlocal stream_sid
                 nonlocal done_response
+                nonlocal api_key
                 try:
                     async for openai_message in openai_ws:
                         try:
@@ -160,7 +157,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                                         await play_typing(websocket, stream_sid)
                                         logger.info("CustomGPT Started")
                                         start_time = time.time()
-                                        result = get_additional_context(arguments['query'], project_id, session_id)
+                                        result = get_additional_context(arguments['query'], api_key, project_id, session_id)
                                         logger.info(f"Clear Audio::Additional Context gained")
                                         await clear_buffer(websocket, stream_sid)
                                         end_time = time.time()
@@ -200,7 +197,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
         except RuntimeError:
             logger.info(f"WebSocket connection closed. Session ID: {session_id}")
 
-def get_additional_context(query, project_id, session_id):
+def get_additional_context(query, api_key, project_id, session_id):
     custom_persona = """
     You are an AI assistant tasked with answering user queries based on a knowledge base. The user query is transcribed from voice audio, so there may be transcription errors.
 
@@ -214,6 +211,7 @@ def get_additional_context(query, project_id, session_id):
     max_retries = 2
     while tries <= max_retries:
         try:
+            CustomGPT.api_key = api_key or CustomGPT_API_KEY
             conversation = CustomGPT.Conversation.send(
                 project_id=project_id, 
                 session_id=session_id, 
@@ -229,12 +227,14 @@ def get_additional_context(query, project_id, session_id):
     return "Sorry, I didn't get your query."
 
 
-def create_session(project_id, caller_number):
+def create_session(api_key, project_id, caller_number):
     tries = 0
     max_retries = 2
     while tries <= max_retries:
         try:
+            CustomGPT.api_key = api_key or CustomGPT_API_KEY
             session = CustomGPT.Conversation.create(project_id=project_id, name=caller_number)
+            logger.info(f"CustomGPT Session Created::{session.parsed.data}");
             return session.parsed.data.session_id
         except Exception as e:
             logger.error(f"Error in create_session::Try {tries}::Error: {session}")

@@ -179,6 +179,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                                         await openai_ws.send(json.dumps({"type": "response.create"}))
                                 except json.JSONDecodeError as e:
                                     logger.error(f"Error in json decode in function_call: {e}::{response}")
+
                         except json.JSONDecodeError as e:
                             logger.error(f"Error in json decode of response: {e}::{openai_message}")
 
@@ -209,15 +210,38 @@ def get_additional_context(query, project_id, session_id):
 
     Provide a concise answer, limited to three sentences.
     """
-    
-    conversation = CustomGPT.Conversation.send(
-        project_id=project_id, 
-        session_id=session_id, 
-        prompt=query, 
-        custom_persona=custom_persona
-    )
-    
-    return f"{conversation.parsed.data.openai_response}"
+    tries = 0
+    max_retries = 2
+    while tries <= max_retries:
+        try:
+            conversation = CustomGPT.Conversation.send(
+                project_id=project_id, 
+                session_id=session_id, 
+                prompt=query, 
+                custom_persona=custom_persona
+            )
+            return conversation.parsed.data.openai_response  # Correct f-string is unnecessary
+        except Exception as e:
+            logger.error(f"Get Additional Context failed::Try {tries}::Error: {conversation}")
+            time.sleep(2)
+        tries += 1
+
+    return "Sorry, I didn't get your query."
+
+
+def create_session(project_id, caller_number):
+    tries = 0
+    max_retries = 2
+    while tries <= max_retries:
+        try:
+            session = CustomGPT.Conversation.create(project_id=project_id, name=caller_number)
+            return session.parsed.data.session_id
+        except Exception as e:
+            logger.error(f"Error in create_session::Try {tries}::Error: {session}")
+        tries += 1
+
+    session_id = uuid.uuid4()
+    return session_id
 
 async def send_session_update(openai_ws):
     session_update = {
@@ -271,10 +295,6 @@ async def send_session_update(openai_ws):
     }
     await openai_ws.send(json.dumps(initial_response))
     await openai_ws.send(json.dumps({"type": "response.create"}))
-
-def create_session(project_id, caller_number):
-    session = CustomGPT.Conversation.create(project_id=project_id, name=caller_number)
-    return session.parsed.data.session_id
 
 async def play_typing(websocket, stream_sid):
     with open(mp3_file_path, "rb") as mp3_file:

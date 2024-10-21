@@ -3,6 +3,7 @@ import json
 import base64
 import asyncio
 import websockets
+import urllib.parse
 from fastapi import FastAPI, WebSocket, Request, WebSocketDisconnect, status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -74,6 +75,8 @@ async def handle_incoming_call(request: Request, project_id: int, api_key: Optio
     response.pause(length=1)
     host = request.url.hostname
     connect = Connect()
+    api_key = CUSTOMGPT_API_KEY
+    api_key = urllib.parse.quote_plus(api_key)
     connect.stream(url=f'wss://{host}/media-stream/project/{project_id}/session/{session_id}/{api_key}')
     response.append(connect)
     return HTMLResponse(content=str(response), media_type="application/xml")
@@ -211,7 +214,7 @@ def get_additional_context(query, api_key, project_id, session_id):
     max_retries = 2
     while tries <= max_retries:
         try:
-            CustomGPT.api_key = api_key or CustomGPT_API_KEY
+            CustomGPT.api_key = api_key or CUSTOMGPT_API_KEY
             conversation = CustomGPT.Conversation.send(
                 project_id=project_id, 
                 session_id=session_id, 
@@ -232,12 +235,12 @@ def create_session(api_key, project_id, caller_number):
     max_retries = 2
     while tries <= max_retries:
         try:
-            CustomGPT.api_key = api_key or CustomGPT_API_KEY
+            CustomGPT.api_key = api_key or CUSTOMGPT_API_KEY
             session = CustomGPT.Conversation.create(project_id=project_id, name=caller_number)
             logger.info(f"CustomGPT Session Created::{session.parsed.data}");
             return session.parsed.data.session_id
         except Exception as e:
-            logger.error(f"Error in create_session::Try {tries}::Error: {session}")
+            logger.error(f"Error in create_session::Try {tries}::Error: {e}")
         tries += 1
 
     session_id = uuid.uuid4()

@@ -75,7 +75,6 @@ async def handle_incoming_call(request: Request, project_id: int, api_key: Optio
     response.pause(length=1)
     host = request.url.hostname
     connect = Connect()
-    api_key = CUSTOMGPT_API_KEY
     api_key = urllib.parse.quote_plus(api_key)
     connect.stream(url=f'wss://{host}/media-stream/project/{project_id}/session/{session_id}/{api_key}')
     response.append(connect)

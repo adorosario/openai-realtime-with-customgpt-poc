@@ -4,11 +4,11 @@ import base64
 import asyncio
 import websockets
 import urllib.parse
-from fastapi import FastAPI, WebSocket, Request, WebSocketDisconnect, status
+from fastapi import FastAPI, WebSocket, Request, WebSocketDisconnect, status, BackgroundTasks
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from typing import Optional
-
+from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Connect, Redirect, Dial
 from dotenv import load_dotenv
 from customgpt_client import CustomGPT
@@ -20,17 +20,16 @@ import redis
 load_dotenv()
 
 redis_url = os.getenv("REDIS_URL")
-
 redis_client = redis.from_url(redis_url)
-
 current_dir = os.path.dirname(__file__)
-
 mp3_file_path = os.path.join(current_dir, "static", "typing.wav")
-
+account_sid = os.environ["TWILIO_ACCOUNT_SID"]
+auth_token = os.environ["TWILIO_AUTH_TOKEN"]
+client = Client(account_sid, auth_token)
 CUSTOMGPT_API_KEY = os.getenv('CUSTOMGPT_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
-SYSTEM_MESSAGE_2 = (
+SYSTEM_MESSAGE = (
     "You are a helpful AI assistant designed to answer questions using only the additional context provided by the get_additional_context function. Only respond to greetings without a function call. Anything else, you NEED to ask the information database by calling the get_additional_context function."
     "For every user query, take the user query and generate a detailed, context-rich request to the get_additional_context function. "
     "Start the generated request with the words 'A user asked: ' and include the exact transcription of the user's request. "
@@ -49,7 +48,7 @@ SYSTEM_MESSAGE_2 = (
     "Respond with concise, natural-sounding answers using varied intonation; incorporate brief pauses and occasional filler words; use context-aware language and reference previous statements; include subtle verbal cues like 'hmm' or 'I see' to simulate thoughtfulness; maintain a consistent personality; and adapt your conversation flow to the caller's tone and pace, all while keeping responses under 50 words unless absolutely necessary."
     "Track consecutive misinterpretations or inabilty to answer user_query and initiate a handoff if misunderstandings reach three. Tell the user to press 0 or ask us to transfer to live agent by triggering call_support function."
     "Verbal Indicators: Recognize phrases like “Operator,” “Help,” or “Live Agent.”to and trigger call_support function. "
-    "YOU SHOULD NEVER START UNLESS ASKED."
+    "NEVER START with call to get_additional_context "
 )
 
 
@@ -77,23 +76,42 @@ async def index_page():
     return "<h1>Twilio Media Stream Server is running!</h1>"
 
 @app.api_route("/incoming-call", methods=["GET", "POST"])
-async def handle_incoming_call(request: Request, project_id: int, api_key: Optional[str] = CUSTOMGPT_API_KEY, phone_number: Optional[str] = PERSONAL_PHONE_NUMBER):
+async def handle_incoming_call(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    project_id: int,
+    api_key: Optional[str] = CUSTOMGPT_API_KEY,
+    phone_number: Optional[str] = PERSONAL_PHONE_NUMBER
+):
     form_data = await request.form() if request.method == "POST" else request.query_params
     caller_number = form_data.get('From', 'Unknown')
     logger.info(f"Caller: {caller_number}")
     session_id = create_session(api_key, project_id, caller_number)
     logger.info(f"Project::{project_id}")
     logger.info(f"Incoming call handled. Session ID: {session_id}")
+    host = request.url.hostname
+    call_id = form_data.get("CallSid")
     response = VoiceResponse()
     response.pause(length=1)
-    host = request.url.hostname
     connect = Connect()
     api_key = urllib.parse.quote_plus(api_key)
     connect.stream(url=f'wss://{host}/media-stream/project/{project_id}/session/{session_id}/{api_key}')
     response.append(connect)
     phone_number = urllib.parse.quote_plus(phone_number)
     response.redirect(url=f"https://{host}/end-stream/{session_id}?phone_number={phone_number}")
+    background_tasks.add_task(start_recording, call_id, session_id, host)
     return HTMLResponse(content=str(response), media_type="application/xml")
+
+@app.post("/log-recording/{session_id}")
+async def log_recording(session_id: str, request: Request):
+    form_data = await request.form()
+    recording_url = form_data.get("RecordingUrl")
+    if recording_url:
+        logger.info(f"Recording for session {session_id}: {recording_url}")
+    else:
+        logger.warning(f"No recording URL received for session {session_id}")
+    return {"status": "Recording logged"}
+
 
 @app.api_route("/end-stream/{session_id}", methods=["GET", "POST"])
 async def handle_end_call(request: Request, session_id: Optional[str] = None, phone_number: Optional[str] = PERSONAL_PHONE_NUMBER):
@@ -130,6 +148,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
         }
     ) as openai_ws:
         try:
+            handle_first_response = time.time()
             start_time = time.time()
             stream_sid = None
 
@@ -282,6 +301,20 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
             except Exception:
                 logger.info(f"WebSocket connection closed. Session ID: {session_id}")
 
+def start_recording(call_id: str, session_id: str, host: str):
+    # Delay the recording by 3 seconds
+    time.sleep(3)
+    # Start the recording
+    try:
+        recording = client.calls(call_id).recordings.create(
+            recording_status_callback=f"https://{host}/log-recording/{session_id}",
+            recording_status_callback_event=["in-progress", "completed"],
+            recording_channels="dual",
+        )
+        logger.info(f"Recording started for Call SID: {call_id} with Recording SID: {recording.sid}")
+    except Exception as e:
+        logger.error(f"Failed to start recording for Call SID: {call_id}. Error: {e}")
+
 def get_additional_context(query, api_key, project_id, session_id):
     custom_persona = """
     You are an AI assistant tasked with answering user queries based on a knowledge base. The user query is transcribed from voice audio, so there may be transcription errors.
@@ -341,7 +374,7 @@ async def send_session_update(openai_ws):
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions": SYSTEM_MESSAGE_2,
+            "instructions": SYSTEM_MESSAGE,
             "modalities": ["text", "audio"],
             "temperature": 0.6,
             "tools": [

@@ -441,3 +441,135 @@ async def clear_buffer(websocket, openai_ws, stream_sid):
     }
     await openai_ws.send(json.dumps({"type": "response.cancel"}))
     await websocket.send_json(audio_delta)
+
+
+# Add these endpoints to your existing FastAPI app
+
+# @app.get("/browser-interface")
+# async def get_browser_interface():
+#     """Serve the browser interface HTML page"""
+#     with open("templates/browser-interface.html") as f:
+#         html_content = f.read()
+#     return HTMLResponse(content=html_content)
+
+# @app.get("/create-session")
+# async def create_browser_session(
+#     project_id: int,
+#     api_key: Optional[str] = CUSTOMGPT_API_KEY
+# ):
+#     print(f"----------{api_key}------------------")
+#     """Create a new session for browser-based streaming"""
+#     session_id = create_session(api_key, project_id, "browser-user")
+#     return {"session_id": session_id}
+
+# @app.websocket("/browser-stream/project/{project_id}/session/{session_id}/{api_key}")
+# async def handle_browser_stream(
+#     websocket: WebSocket,
+#     project_id: int,
+#     session_id: str,
+#     api_key: str
+# ):
+#     """Handle WebSocket connection for browser-based streaming"""
+#     await websocket.accept()
+#     logger.info(f"Browser WebSocket connection accepted. Session ID: {session_id}")
+
+#     termination_event = asyncio.Event()
+
+#     async with websockets.connect(
+#         'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
+#         extra_headers={
+#             "Authorization": f"Bearer {OPENAI_API_KEY}",
+#             "OpenAI-Beta": "realtime=v1"
+#         }
+#     ) as openai_ws:
+#         try:
+#             # Send initial session configuration
+#             await send_session_update(openai_ws)
+
+#             async def receive_from_browser():
+#                 # try:
+#                     # while not termination_event.is_set():
+#                 try:
+#                     message = await websocket.receive_text()
+#                     print(message)
+#                     data = json.loads(message)
+#                     if data['event'] == 'media' and openai_ws.open:
+#                         audio_append = {
+#                             "type": "input_audio_buffer.append",
+#                             "audio": data['media']['payload']
+#                         }
+#                         await openai_ws.send(json.dumps(audio_append))
+                        
+#                 except WebSocketDisconnect:
+#                     logger.info(f"Browser WebSocket disconnected. Session ID: {session_id}")
+#                     # break
+#                 except Exception as e:
+#                     logger.error(f"Error in receive_from_browser: {e}")
+#                     # break
+#                 # finally:
+#                     # termination_event.set()
+
+#             async def send_to_browser():
+#                 try:
+#                     async for openai_message in openai_ws:
+#                         response = json.loads(openai_message)
+                        
+#                         if response['type'] == 'input_audio_buffer.speech_started':
+
+#                             await websocket.send_json({
+#                                 "type": "status",
+#                                 "status": "listening"
+#                             })
+#                         elif response['type'] == 'response.audio.delta' and response.get('delta'):
+#                             try:
+#                                 audio_payload = base64.b64encode(base64.b64decode(response['delta'])).decode('utf-8')
+#                                 audio_delta = audio_payload
+#                                 await websocket.send_json(audio_delta)
+#                                 start_time = time.time()
+#                             except asyncio.TimeoutError:
+#                                 logger.error("Timeout while sending audio data to Twilio")
+#                             except Exception as e:
+#                                 logger.error(f"Error processing audio data: {e}")   
+#                         elif response['type'] == 'response.function_call_arguments.done':
+#                             try:
+#                                 function_name = response['name']
+#                                 call_id = response['call_id']
+#                                 arguments = json.loads(response['arguments'])
+                                
+#                                 if function_name == 'get_additional_context':
+#                                     await play_typing(websocket, session_id)
+#                                     result = get_additional_context(
+#                                         arguments['query'],
+#                                         api_key,
+#                                         project_id,
+#                                         session_id
+#                                     )
+                                    
+#                                     function_response = {
+#                                         "type": "conversation.item.create",
+#                                         "item": {
+#                                             "type": "function_call_output",
+#                                             "call_id": call_id,
+#                                             "output": result
+#                                         }
+#                                     }
+#                                     await openai_ws.send(json.dumps(function_response))
+#                                     await openai_ws.send(json.dumps({"type": "response.create"}))
+                                    
+#                             except json.JSONDecodeError as e:
+#                                 logger.error(f"Error in function call processing: {e}")
+
+#                 except Exception as e:
+#                     logger.error(f"Error in send_to_browser: {e}")
+#                 finally:
+#                     termination_event.set()
+
+#             await asyncio.gather(receive_from_browser(), send_to_browser())
+            
+#         except Exception as e:
+#             logger.error(f"Error in handle_browser_stream: {e}")
+#         finally:
+#             try:
+#                 await websocket.close()
+#             except:
+#                 pass

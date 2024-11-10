@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Voice Assistant</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: #f5f5f5;
+        }
+        .container { 
+            max-width: 800px; 
+            margin: 0 auto;
+            padding: 20px;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        .status { 
+            text-align: center;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            transition: all 0.3s ease;
+        }
+        .listening { 
+            background: #d4edda;
+            color: #155724;
+        }
+        .processing { 
+            background: #cce5ff;
+            color: #004085;
+        }
+        .error { 
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .conversation {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .message {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 8px;
+            max-width: 80%;
+        }
+        .user-message {
+            background: #e3f2fd;
+            margin-left: auto;
+        }
+        .assistant-message {
+            background: #f5f5f5;
+            margin-right: auto;
+        }
+        .pulse {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            margin: 20px auto;
+            position: relative;
+            background: #4CAF50;
+        }
+        .pulse.active {
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.4);
+            }
+            70% {
+                box-shadow: 0 0 0 20px rgba(76, 175, 80, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(76, 175, 80, 0);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="status" class="status">Initializing...</div>
+        <div class="conversation" id="conversation"></div>
+        <div id="pulse" class="pulse"></div>
+    </div>
+
+    <script>
+    	class AudioQueueManager {
+		    audioQueue = [];
+		    isPlaying = false;
+		    pitchFactor = 0.5; // Default pitch factor
+
+		    setPitchFactor(factor) {
+		        this.pitchFactor = factor;
+		    }
+		    addAudioToQueue(audioData) {
+		        this.audioQueue.push(audioData);
+		        this.playNext();
+		    }
+		    async playNext() {
+		        if (this.isPlaying || this.audioQueue.length === 0) return;
+		        this.isPlaying = true;
+		        const audioData = this.audioQueue.shift();
+		        await this.playAudio(audioData);
+		        this.isPlaying = false;
+		        this.playNext();
+		    }
+		    playAudio(audioArrayBuffer) {
+		        return new Promise(async (resolve) => {
+		            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+		            try {
+		                // Decode audio data
+		                const audioBuffer = await audioContext.decodeAudioData(audioArrayBuffer);
+
+		                // Create a source node
+		                const source = audioContext.createBufferSource();
+		                source.buffer = audioBuffer;
+		                source.playbackRate.value = this.pitchFactor;
+		                source.connect(audioContext.destination);
+
+		                source.onended = resolve;
+		                source.start(0);
+		            } catch (error) {
+		                console.error("Error playing audio:", error);
+		                resolve();
+		            }
+		        });
+		    }
+		}
+        let ws;
+        let audioContext;
+        let mediaStreamSource;
+        let processor;
+        let silenceStart = null;
+        const SILENCE_THRESHOLD = 0.01;
+        const SILENCE_DURATION = 1000; // 1 second of silence to trigger end
+        
+        const status = document.getElementById('status');
+        const conversation = document.getElementById('conversation');
+        const pulse = document.getElementById('pulse');
+
+        // Audio playback queue and state
+        let audioQueue = [];
+        let isPlaying = false;
+
+        function updateStatus(message, type) {
+            status.textContent = message;
+            status.className = `status ${type}`;
+        }
+
+        function addMessage(text, isUser) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'assistant-message'}`;
+            messageDiv.textContent = text;
+            conversation.appendChild(messageDiv);
+            conversation.scrollTop = conversation.scrollHeight;
+        }
+
+        async function initializeAudio() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { 
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+                
+                audioContext = new AudioContext();
+                mediaStreamSource = audioContext.createMediaStreamSource(stream);
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+                mediaStreamSource.connect(processor);
+                processor.connect(audioContext.destination);
+
+                let isProcessing = false;
+
+                processor.onaudioprocess = (e) => {
+                    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    const rms = Math.sqrt(inputData.reduce((acc, val) => acc + val * val, 0) / inputData.length);
+
+                    if (rms > SILENCE_THRESHOLD) {
+                        silenceStart = null;
+                        pulse.classList.add('active');
+                        
+                        if (!isProcessing) {
+                            updateStatus('Listening...', 'listening');
+                            isProcessing = true;
+                        }
+
+                        // Convert to 16-bit PCM
+                        const pcmData = new Int16Array(inputData.length);
+                        for (let i = 0; i < inputData.length; i++) {
+                            pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
+                        }
+
+                        // Convert to base64
+                        const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
+                        
+                        ws.send(JSON.stringify({
+                            event: 'media',
+                            media: {
+                                payload: base64Audio
+                            }
+                        }));
+                    } else {
+                        if (!silenceStart) {
+                            silenceStart = Date.now();
+                        } else if (Date.now() - silenceStart > SILENCE_DURATION) {
+                            pulse.classList.remove('active');
+                            if (isProcessing) {
+                                updateStatus('Processing...', 'processing');
+                                isProcessing = false;
+                            }
+                        }
+                    }
+                };
+
+                return true;
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                updateStatus('Error accessing microphone', 'error');
+                return false;
+            }
+        }
+
+        async function initializeWebSocket(projectId, sessionId, apiKey) {
+            const wsUrl = `ws://${window.location.host}/browser-stream/project/${projectId}/session/${sessionId}/${apiKey}`;
+            ws = new WebSocket(wsUrl);
+			const audioQueueManager = new AudioQueueManager();
+
+
+            ws.onopen = () => {
+                updateStatus('Connected', 'listening');
+            };
+            
+            ws.onmessage = async (event) => {
+            	console.log(event.data)
+		        const audioData = base64ToArrayBuffer(event.data);
+
+		        // Step 2: Create WAV header
+		        const wavHeader = createWavHeader(audioData.byteLength);
+
+		        // Step 3: Concatenate WAV header and audio data
+		        const combinedBuffer = new Uint8Array(wavHeader.byteLength + audioData.byteLength);
+		        combinedBuffer.set(new Uint8Array(wavHeader), 0);
+		        combinedBuffer.set(new Uint8Array(audioData), wavHeader.byteLength);
+
+		        // Step 4: Decode combined buffer and play audio
+		        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+		        const audioBuffer = await audioContext.decodeAudioData(combinedBuffer.buffer);
+
+		        const source = audioContext.createBufferSource();
+		        source.buffer = audioBuffer;
+		        source.connect(audioContext.destination);
+		        source.start();
+                // audioQueueManager.addAudioToQueue(event.data);
+            };
+            
+            ws.onclose = () => {
+                updateStatus('Disconnected - Refresh to reconnect', 'error');
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                updateStatus('Connection error - Please refresh', 'error');
+            };
+        }
+        function createWavHeader(dataLength, sampleRate = 16000, numChannels = 1) {
+		    const blockAlign = numChannels * 2;
+		    const byteRate = sampleRate * blockAlign;
+		    const buffer = new ArrayBuffer(44);
+		    const view = new DataView(buffer);
+
+		    // "RIFF" chunk descriptor
+		    writeString(view, 0, "RIFF");
+		    view.setUint32(4, 36 + dataLength, true); // File size - 8 bytes
+		    writeString(view, 8, "WAVE");
+
+		    // "fmt " sub-chunk
+		    writeString(view, 12, "fmt ");
+		    view.setUint32(16, 16, true); // Subchunk1 size (16 for PCM)
+		    view.setUint16(20, 1, true); // Audio format (1 for PCM)
+		    view.setUint16(22, numChannels, true); // Num channels
+		    view.setUint32(24, sampleRate, true); // Sample rate
+		    view.setUint32(28, byteRate, true); // Byte rate
+		    view.setUint16(32, blockAlign, true); // Block align
+		    view.setUint16(34, 16, true); // Bits per sample (16 bits)
+
+		    // "data" sub-chunk
+		    writeString(view, 36, "data");
+		    view.setUint32(40, dataLength, true); // Subchunk2 size
+
+		    return buffer;
+		}
+
+		function writeString(view, offset, string) {
+		    for (let i = 0; i < string.length; i++) {
+		        view.setUint8(offset + i, string.charCodeAt(i));
+		    }
+		}
+
+		function base64ToArrayBuffer(base64) {
+		    const binaryString = atob(base64);
+		    const len = binaryString.length;
+		    const bytes = new Uint8Array(len);
+		    for (let i = 0; i < len; i++) {
+		        bytes[i] = binaryString.charCodeAt(i);
+		    }
+		    return bytes.buffer;
+		}
+
+        // Initialize when page loads
+        const urlParams = new URLSearchParams(window.location.search);
+        const projectId = urlParams.get('project_id');
+        const apiKey = urlParams.get('api_key');
+        
+        if (projectId && apiKey) {
+            fetch(`/create-session?project_id=${projectId}&api_key=${apiKey}`)
+                .then(response => response.json())
+                .then(async data => {
+                    const audioInitialized = await initializeAudio();
+                    if (audioInitialized) {
+                        initializeWebSocket(projectId, data.session_id, apiKey);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error creating session:', error);
+                    updateStatus('Error creating session', 'error');
+                });
+        } else {
+            updateStatus('Missing project ID or API key', 'error');
+        }
+
+    </script>
+</body>
+</html>

@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from typing import Optional
 from twilio.rest import Client
-from twilio.twiml.voice_response import VoiceResponse, Connect, Redirect, Dial
+from twilio.twiml.voice_response import VoiceResponse, Connect, Redirect, Dial, Stream
 from dotenv import load_dotenv
 from customgpt_client import CustomGPT
 import uuid
@@ -46,9 +46,10 @@ SYSTEM_MESSAGE = (
     "Be concise and directly address the user's query based only on the additional context. "
     "Do not mention the process of using get_additional_context in your responses to the user."
     "Respond with concise, natural-sounding answers using varied intonation; incorporate brief pauses and occasional filler words; use context-aware language and reference previous statements; include subtle verbal cues like 'hmm' or 'I see' to simulate thoughtfulness; maintain a consistent personality; and adapt your conversation flow to the caller's tone and pace, all while keeping responses under 50 words unless absolutely necessary."
-    "Track consecutive misinterpretations or inabilty to answer user_query and initiate a handoff if misunderstandings reach three. Tell the user to press 0 or ask us to transfer to live agent by triggering call_support function."
+    "Track consecutive misinterpretations or inabilty to answer user_query and initiate a handoff if misunderstandings reach three. If PHONE_NUMBER is present tell the user to  press 0 or ask us to transfer to live agent by triggering call_support function."
     "Verbal Indicators: Recognize phrases like “Operator,” “Help,” or “Live Agent.”to and trigger call_support function. "
-    "NEVER START with call to get_additional_context "
+    "---PHONE_NUMBER={phone_number}.----\n "
+    "NEVER START with call to get_additional_context."
 )
 
 
@@ -61,6 +62,7 @@ LOG_EVENT_TYPES = [
 ]
 
 PERSONAL_PHONE_NUMBER = os.getenv("PERSONAL_PHONE_NUMBER")
+DEFAULT_INTRO = "Hello, how can I assist you today?"
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -80,8 +82,9 @@ async def handle_incoming_call(
     request: Request,
     background_tasks: BackgroundTasks,
     project_id: int,
-    api_key: Optional[str] = CUSTOMGPT_API_KEY,
-    phone_number: Optional[str] = PERSONAL_PHONE_NUMBER
+    api_key: Optional[str] = None,
+    phone_number: Optional[str] = None,
+    introduction: Optional[str] = DEFAULT_INTRO
 ):
     form_data = await request.form() if request.method == "POST" else request.query_params
     caller_number = form_data.get('From', 'Unknown')
@@ -94,10 +97,14 @@ async def handle_incoming_call(
     response = VoiceResponse()
     response.pause(length=1)
     connect = Connect()
-    api_key = urllib.parse.quote_plus(api_key)
-    connect.stream(url=f'wss://{host}/media-stream/project/{project_id}/session/{session_id}/{api_key}')
+    stream = Stream(url=f'wss://{host}/media-stream/project/{project_id}/session/{session_id}')
+    stream.parameter(name='introduction', value=introduction)
+    stream.parameter(name='api_key', value=api_key)
+    stream.parameter(name='phone_number', value=phone_number)
+    connect.append(stream)
     response.append(connect)
-    phone_number = urllib.parse.quote_plus(phone_number)
+    if phone_number:
+        phone_number = urllib.parse.quote_plus(phone_number)
     response.redirect(url=f"https://{host}/end-stream/{session_id}?phone_number={phone_number}")
     background_tasks.add_task(start_recording, call_id, session_id, host)
     return HTMLResponse(content=str(response), media_type="application/xml")
@@ -114,29 +121,29 @@ async def log_recording(session_id: str, request: Request):
 
 
 @app.api_route("/end-stream/{session_id}", methods=["GET", "POST"])
-async def handle_end_call(request: Request, session_id: Optional[str] = None, phone_number: Optional[str] = PERSONAL_PHONE_NUMBER):
+async def handle_end_call(request: Request, session_id: Optional[str] = None, phone_number: Optional[str] = None):
     state = redis_client.get(session_id)
-    if state is None:
-        state = 'transfer'
-    else:
+    if state:
         state = state.decode('utf-8') 
     logger.info(f"Ending Stream with state: {state}")
     response = VoiceResponse()
-    if state == "hangup":
-        response.hangup()
-    else:
+    if state == "transfer":
         dial = Dial()
         dial.number(phone_number)
         response.append(dial)
+    else:
+        response.hangup()
 
     return HTMLResponse(content=str(response), media_type="application/xml")
 
-@app.websocket("/media-stream/project/{project_id}/session/{session_id}/{api_key}")
-async def handle_media_stream(websocket: WebSocket, project_id: int, session_id: str, api_key: str):
-    logger.info(f"WebSocket connection attempt. Session ID: {session_id}:: {api_key}")
+@app.websocket("/media-stream/project/{project_id}/session/{session_id}")
+async def handle_media_stream(websocket: WebSocket, project_id: int, session_id: str):
+    api_key = None
+    phone_number = None
+    introduction = None
+    logger.info(f"WebSocket connection attempt. Session ID: {session_id}")
     await websocket.accept()
     logger.info(f"WebSocket connection accepted. Session ID: {session_id}")
-
     # Create task termination event
     termination_event = asyncio.Event()
 
@@ -160,7 +167,6 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                         diff = current_time - start_time
                         if diff > 40:
                             logger.info(f"Session timeout after 30 seconds of inactivity. Session ID: {session_id}")
-                            redis_client.set(session_id, "hangup")
                             termination_event.set()
                             await clear_buffer(websocket, openai_ws, stream_sid)
                             await websocket.close()
@@ -169,7 +175,6 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                 except Exception as e:
                     raise e
 
-            await send_session_update(openai_ws)
             asyncio.create_task(check_timeout())
             async def receive_from_twilio():
                 nonlocal stream_sid, start_time
@@ -185,13 +190,18 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                                 }
                                 await openai_ws.send(json.dumps(audio_append))
                             elif data['event'] == 'start':
+                                api_key = data['start']['customParameters']['api_key']
+                                phone_number = data['start']['customParameters']['phone_number']
+                                introduction = data['start']['customParameters']['introduction']
                                 stream_sid = data['start']['streamSid']
+                                await send_session_update(openai_ws, phone_number, introduction)
                                 start_time = time.time()
                                 logger.info(f"Incoming stream has started {stream_sid}")
                             elif data['event'] == 'dtmf':
                                 digit = data['dtmf']['digit']
                                 logger.info(f"DTMF received: {digit}")
                                 if digit == "0":
+                                    redis_client.set(session_id, "transfer")
                                     logger.info("DTMF '0' detected, redirecting call...")
                                     termination_event.set()
                                     await websocket.close()
@@ -214,7 +224,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                     raise Exception("Close Stream")
 
             async def send_to_twilio():
-                nonlocal stream_sid, api_key, start_time
+                nonlocal stream_sid, start_time
                 try:
                     async for openai_message in openai_ws:
                         try:
@@ -272,6 +282,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                                         await openai_ws.send(json.dumps({"type": "response.create"}))
                                     elif function_name == 'call_support':
                                         logger.info("Detected Term for calling support...")
+                                        redis_client.set(session_id, "transfer")
                                         termination_event.set()
                                         raise Exception("Close Stream")
 
@@ -303,7 +314,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
 
 def start_recording(call_id: str, session_id: str, host: str):
     # Delay the recording by 3 seconds
-    time.sleep(3)
+    time.sleep(2)
     # Start the recording
     try:
         recording = client.calls(call_id).recordings.create(
@@ -361,7 +372,7 @@ def create_session(api_key, project_id, caller_number):
     session_id = uuid.uuid4()
     return session_id
 
-async def send_session_update(openai_ws):
+async def send_session_update(openai_ws, phone_number, introduction):
     session_update = {
         "type": "session.update",
         "session": {
@@ -374,7 +385,7 @@ async def send_session_update(openai_ws):
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions": SYSTEM_MESSAGE,
+            "instructions": SYSTEM_MESSAGE.format(phone_number=phone_number),
             "modalities": ["text", "audio"],
             "temperature": 0.6,
             "tools": [
@@ -404,6 +415,9 @@ async def send_session_update(openai_ws):
     logger.info('Sending session update: %s', json.dumps(session_update))
     await openai_ws.send(json.dumps(session_update))
     time.sleep(1)
+    await play_message(openai_ws, introduction)
+    
+async def play_message(openai_ws, message):
     initial_response = {
         "type": "conversation.item.create",
         "item": {
@@ -412,7 +426,7 @@ async def send_session_update(openai_ws):
             "content": [
               {
                 "type": "text",
-                "text": "Hello, how can I assist you today?"
+                "text": message
               }
             ]
         }
@@ -441,3 +455,4 @@ async def clear_buffer(websocket, openai_ws, stream_sid):
     }
     await openai_ws.send(json.dumps({"type": "response.cancel"}))
     await websocket.send_json(audio_delta)
+

@@ -49,7 +49,7 @@ SYSTEM_MESSAGE = (
     "Track consecutive misinterpretations or inabilty to answer user_query and initiate a handoff if misunderstandings reach three. If PHONE_NUMBER is present tell the user to  press 0 or ask us to transfer to live agent by triggering call_support function."
     "Verbal Indicators: Recognize phrases like “Operator,” “Help,” or “Live Agent.”to and trigger call_support function. "
     "---PHONE_NUMBER={phone_number}.----\n "
-    "NEVER START with call to get_additional_context."
+    "YOU MUST NEVER START WITH FUNCTION CALL to get_additional_context."
 )
 
 

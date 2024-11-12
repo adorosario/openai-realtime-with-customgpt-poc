@@ -19,8 +19,8 @@ import redis
 
 load_dotenv()
 
-redis_url = os.getenv("REDIS_URL")
-redis_client = redis.from_url(redis_url)
+redis_url = urlparse(os.environ.get("REDIS_URL"))
+redis_client = redis.Redis(host=redis_url.hostname, port=redis_url.port, password=redis_url.password, ssl=True, ssl_cert_reqs=None)
 current_dir = os.path.dirname(__file__)
 mp3_file_path = os.path.join(current_dir, "static", "typing.wav")
 account_sid = os.environ["TWILIO_ACCOUNT_SID"]
@@ -30,6 +30,7 @@ CUSTOMGPT_API_KEY = os.getenv('CUSTOMGPT_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
 SYSTEM_MESSAGE = (
+    "YOU MUST NEVER START CALL WITH FUNCTION CALL to get_additional_context."
     "You are a helpful AI assistant designed to answer questions using only the additional context provided by the get_additional_context function. Only respond to greetings without a function call. Anything else, you NEED to ask the information database by calling the get_additional_context function."
     "For every user query, take the user query and generate a detailed, context-rich request to the get_additional_context function. "
     "Start the generated request with the words 'A user asked: ' and include the exact transcription of the user's request. "

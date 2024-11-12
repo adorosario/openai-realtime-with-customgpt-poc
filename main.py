@@ -19,7 +19,7 @@ import redis
 
 load_dotenv()
 
-redis_url = urlparse(os.environ.get("REDIS_URL"))
+redis_url = urllib.parse.urlparse(os.environ.get("REDIS_URL"))
 redis_client = redis.Redis(host=redis_url.hostname, port=redis_url.port, password=redis_url.password, ssl=True, ssl_cert_reqs=None)
 current_dir = os.path.dirname(__file__)
 mp3_file_path = os.path.join(current_dir, "static", "typing.wav")
@@ -47,8 +47,8 @@ SYSTEM_MESSAGE = (
     "Be concise and directly address the user's query based only on the additional context. "
     "Do not mention the process of using get_additional_context in your responses to the user."
     "Respond with concise, natural-sounding answers using varied intonation; incorporate brief pauses and occasional filler words; use context-aware language and reference previous statements; include subtle verbal cues like 'hmm' or 'I see' to simulate thoughtfulness; maintain a consistent personality; and adapt your conversation flow to the caller's tone and pace, all while keeping responses under 50 words unless absolutely necessary."
-    "Track consecutive misinterpretations or inabilty to answer user_query and initiate a handoff if misunderstandings reach three. If PHONE_NUMBER is present tell the user to  press 0 or ask us to transfer to live agent by triggering call_support function."
-    "Verbal Indicators: Recognize phrases like “Operator,” “Help,” or “Live Agent.”to and trigger call_support function. "
+    "Track consecutive misinterpretations or inabilty to answer user_query and initiate a handoff if PHONE_NUMBER is present and unable to answer three times tell the user to press 0 or ask us to transfer to live agent by triggering call_support function."
+    "Verbal Indicators: Recognize phrases like “Operator,” or “Live Agent.”to and trigger call_support function. "
     "---PHONE_NUMBER={phone_number}.----\n "
     "YOU MUST NEVER START WITH FUNCTION CALL to get_additional_context."
 )

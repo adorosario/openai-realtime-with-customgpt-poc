@@ -31,7 +31,7 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
 DEFAULT_INTRO = 'Hello! How can i assist you today'
 SYSTEM_MESSAGE = (
-    "Always start with {introduction} welcome message."
+    "Start with call session with {introduction}"
     "You are a helpful AI assistant designed to answer questions using only the additional context provided by the get_additional_context function. Only respond to greetings without a function call. Anything else, you NEED to ask the information database by calling the get_additional_context function."
     "For every user query, take the user query and generate a detailed, context-rich request to the get_additional_context function. "
     "Start the generated request with the words 'A user asked: ' and include the exact transcription of the user's request. "
@@ -52,7 +52,7 @@ SYSTEM_MESSAGE = (
     "Verbal Indicators: Recognize phrases like “Operator,” or “Live Agent.”to and trigger call_support function. "
     "---PHONE_NUMBER={phone_number}.---\n"
     "INPORTANT NOTE:"
-    "YOU MUST NEVER CALL get_additional_context at start of conversation. NEVER justify your answer"
+    "YOU MUST NEVER START SESSION WITH get_additional_context. NEVER justify your answer. Use get_additional_context for questions asked by the user."
 )
 
 
@@ -417,7 +417,7 @@ async def send_session_update(openai_ws, phone_number, introduction):
     }
     logger.info('Sending session update: %s', json.dumps(session_update))
     await openai_ws.send(json.dumps(session_update))
-    time.sleep(2)
+    time.sleep(1)
     initial_response = {
         "type": "conversation.item.create",
         "item": {
@@ -425,14 +425,14 @@ async def send_session_update(openai_ws, phone_number, introduction):
             "role": "user",
             "content": [
               {
-                "type": "input_text",
-                "text": f"Repeat after me: {introduction}"
+                "type": "text",
+                "text": "Introduce yourself"
               }
             ]
         }
     }
     await openai_ws.send(json.dumps(initial_response))
-    await openai_ws.send(json.dumps({"type": "response.create"}))    
+    await openai_ws.send(json.dumps({"type": "response.create", "response": { "instructions": f"Introduce yourself as {introduction}"} }))
 
 async def play_typing(websocket, stream_sid):
     with open(mp3_file_path, "rb") as mp3_file:

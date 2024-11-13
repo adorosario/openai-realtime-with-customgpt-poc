@@ -29,8 +29,9 @@ client = Client(account_sid, auth_token)
 CUSTOMGPT_API_KEY = os.getenv('CUSTOMGPT_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
+DEFAULT_INTRO = 'Hello! How can i assist you today'
 SYSTEM_MESSAGE = (
-    "YOU MUST NEVER START CALL WITH FUNCTION CALL to get_additional_context."
+    "Always start with {introduction} welcome message."
     "You are a helpful AI assistant designed to answer questions using only the additional context provided by the get_additional_context function. Only respond to greetings without a function call. Anything else, you NEED to ask the information database by calling the get_additional_context function."
     "For every user query, take the user query and generate a detailed, context-rich request to the get_additional_context function. "
     "Start the generated request with the words 'A user asked: ' and include the exact transcription of the user's request. "
@@ -49,8 +50,9 @@ SYSTEM_MESSAGE = (
     "Respond with concise, natural-sounding answers using varied intonation; incorporate brief pauses and occasional filler words; use context-aware language and reference previous statements; include subtle verbal cues like 'hmm' or 'I see' to simulate thoughtfulness; maintain a consistent personality; and adapt your conversation flow to the caller's tone and pace, all while keeping responses under 50 words unless absolutely necessary."
     "Track consecutive misinterpretations or inabilty to answer user_query and initiate a handoff if PHONE_NUMBER is present and unable to answer three times tell the user to press 0 or ask us to transfer to live agent by triggering call_support function."
     "Verbal Indicators: Recognize phrases like “Operator,” or “Live Agent.”to and trigger call_support function. "
-    "---PHONE_NUMBER={phone_number}.----\n "
-    "YOU MUST NEVER START WITH FUNCTION CALL to get_additional_context."
+    "---PHONE_NUMBER={phone_number}.---\n"
+    "INPORTANT NOTE:"
+    "YOU MUST NEVER CALL get_additional_context at start of conversation. NEVER justify your answer"
 )
 
 
@@ -63,7 +65,6 @@ LOG_EVENT_TYPES = [
 ]
 
 PERSONAL_PHONE_NUMBER = os.getenv("PERSONAL_PHONE_NUMBER")
-DEFAULT_INTRO = "Hello, how can I assist you today?"
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -87,6 +88,7 @@ async def handle_incoming_call(
     phone_number: Optional[str] = None,
     introduction: Optional[str] = DEFAULT_INTRO
 ):
+    logger.info(f"Introduction: {introduction}")
     form_data = await request.form() if request.method == "POST" else request.query_params
     caller_number = form_data.get('From', 'Unknown')
     logger.info(f"Caller: {caller_number}")
@@ -98,10 +100,10 @@ async def handle_incoming_call(
     response = VoiceResponse()
     response.pause(length=1)
     connect = Connect()
-    stream = Stream(url=f'wss://{host}/media-stream/project/{project_id}/session/{session_id}')
-    stream.parameter(name='introduction', value=introduction)
+    encoded_phone_number = urllib.parse.quote_plus(phone_number)
+    encoded_introduction = urllib.parse.quote_plus(introduction)
+    stream = Stream(url=f'wss://{host}/media-stream/project/{project_id}/session/{session_id}/{encoded_phone_number}/{encoded_introduction}')
     stream.parameter(name='api_key', value=api_key)
-    stream.parameter(name='phone_number', value=phone_number)
     connect.append(stream)
     response.append(connect)
     if phone_number:
@@ -137,14 +139,12 @@ async def handle_end_call(request: Request, session_id: Optional[str] = None, ph
 
     return HTMLResponse(content=str(response), media_type="application/xml")
 
-@app.websocket("/media-stream/project/{project_id}/session/{session_id}")
-async def handle_media_stream(websocket: WebSocket, project_id: int, session_id: str):
-    api_key = None
-    phone_number = None
-    introduction = None
+@app.websocket("/media-stream/project/{project_id}/session/{session_id}/{phone_number}/{introduction}")
+async def handle_media_stream(websocket: WebSocket, project_id: int, session_id: str, phone_number: str, introduction: str):
     logger.info(f"WebSocket connection attempt. Session ID: {session_id}")
     await websocket.accept()
     logger.info(f"WebSocket connection accepted. Session ID: {session_id}")
+    api_key = None
     # Create task termination event
     termination_event = asyncio.Event()
 
@@ -159,7 +159,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
             handle_first_response = time.time()
             start_time = time.time()
             stream_sid = None
-
+            await send_session_update(openai_ws, phone_number, introduction)
             async def check_timeout():
                 logger.info(f"Checking inactivity. Session ID: {session_id}")
                 try:
@@ -192,10 +192,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                                 await openai_ws.send(json.dumps(audio_append))
                             elif data['event'] == 'start':
                                 api_key = data['start']['customParameters']['api_key']
-                                phone_number = data['start']['customParameters']['phone_number']
-                                introduction = data['start']['customParameters']['introduction']
                                 stream_sid = data['start']['streamSid']
-                                await send_session_update(openai_ws, phone_number, introduction)
                                 start_time = time.time()
                                 logger.info(f"Incoming stream has started {stream_sid}")
                             elif data['event'] == 'dtmf':
@@ -289,6 +286,10 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
 
                                 except json.JSONDecodeError as e:
                                     logger.error(f"Error in json decode in function_call: {e}::{response}")
+                                except Exception as e:
+                                    logger.error(f"Error in function_call.done: {e}")
+                                    raise Exception("Close Stream")
+
 
                         except json.JSONDecodeError as e:
                             logger.error(f"Error in json decode of response: {e}::{openai_message}")
@@ -374,6 +375,7 @@ def create_session(api_key, project_id, caller_number):
     return session_id
 
 async def send_session_update(openai_ws, phone_number, introduction):
+    introduction = introduction.replace('+', ' ')
     session_update = {
         "type": "session.update",
         "session": {
@@ -386,7 +388,7 @@ async def send_session_update(openai_ws, phone_number, introduction):
             "input_audio_format": "g711_ulaw",
             "output_audio_format": "g711_ulaw",
             "voice": VOICE,
-            "instructions": SYSTEM_MESSAGE.format(phone_number=phone_number),
+            "instructions": SYSTEM_MESSAGE.format(phone_number=phone_number, introduction=introduction),
             "modalities": ["text", "audio"],
             "temperature": 0.6,
             "tools": [
@@ -415,25 +417,22 @@ async def send_session_update(openai_ws, phone_number, introduction):
     }
     logger.info('Sending session update: %s', json.dumps(session_update))
     await openai_ws.send(json.dumps(session_update))
-    time.sleep(1)
-    await play_message(openai_ws, introduction)
-    
-async def play_message(openai_ws, message):
+    time.sleep(2)
     initial_response = {
         "type": "conversation.item.create",
         "item": {
             "type": "message",
-            "role": "assistant",
+            "role": "user",
             "content": [
               {
-                "type": "text",
-                "text": message
+                "type": "input_text",
+                "text": f"Repeat after me: {introduction}"
               }
             ]
         }
     }
     await openai_ws.send(json.dumps(initial_response))
-    await openai_ws.send(json.dumps({"type": "response.create"}))
+    await openai_ws.send(json.dumps({"type": "response.create"}))    
 
 async def play_typing(websocket, stream_sid):
     with open(mp3_file_path, "rb") as mp3_file:
@@ -456,4 +455,3 @@ async def clear_buffer(websocket, openai_ws, stream_sid):
     }
     await openai_ws.send(json.dumps({"type": "response.cancel"}))
     await websocket.send_json(audio_delta)
-

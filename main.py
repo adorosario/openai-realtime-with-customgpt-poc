@@ -30,30 +30,64 @@ CUSTOMGPT_API_KEY = os.getenv('CUSTOMGPT_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 PORT = int(os.getenv('PORT', 5050))
 DEFAULT_INTRO = 'Hello! How can i assist you today'
-SYSTEM_MESSAGE = (
-    "Start with call session with {introduction}"
-    "You are a helpful AI assistant designed to answer questions using only the additional context provided by the get_additional_context function. Only respond to greetings without a function call. Anything else, you NEED to ask the information database by calling the get_additional_context function."
-    "For every user query, take the user query and generate a detailed, context-rich request to the get_additional_context function. "
-    "Start the generated request with the words 'A user asked: ' and include the exact transcription of the user's request. "
-    "Expand on the intent and purpose behind the question, adding depth, specificity, and clarity."
-    "Tailor the information as if the user were asking an expert in the relevant field, and include any relevant contextual details that would help make the request more comprehensive."
-    "The goal is to enhance the user query, making it clearer and more informative while maintaining the original intent."
-    "Do not elaborate the user_query in audio stream just pass it to get_additional_context."
-    "Now, using this approach, elaborate the user query and then pass detailed user_query immediately to get_additional_context function to obtain information. "
-    "Do not use your own knowledge base to answer questions. "
-    "Always base your responses solely on the information returned by get_additional_context. "
-    "If get_additional_context returns information indicating it's unable to answer or provide details, "
-    "Do not elaborate or use any other information beyond what get_additional_context provides. "
-    "If get_additional_context provides relevant information, incorporate it into your response. "
-    "Be concise and directly address the user's query based only on the additional context. "
-    "Do not mention the process of using get_additional_context in your responses to the user."
-    "Respond with concise, natural-sounding answers using varied intonation; incorporate brief pauses and occasional filler words; use context-aware language and reference previous statements; include subtle verbal cues like 'hmm' or 'I see' to simulate thoughtfulness; maintain a consistent personality; and adapt your conversation flow to the caller's tone and pace, all while keeping responses under 50 words unless absolutely necessary."
-    "Track consecutive misinterpretations or inabilty to answer user_query and initiate a handoff if PHONE_NUMBER is present and unable to answer three times tell the user to press 0 or ask us to transfer to live agent by triggering call_support function."
-    "Verbal Indicators: Recognize phrases like “Operator,” or “Live Agent.”to and trigger call_support function. "
-    "---PHONE_NUMBER={phone_number}.---\n"
-    "INPORTANT NOTE:"
-    "YOU MUST NEVER START SESSION WITH get_additional_context. NEVER justify your answer. Use get_additional_context for questions asked by the user."
-)
+SYSTEM_MESSAGE = """
+# Core Purpose & Initialization
+- Start session with {introduction}
+- You are an AI assistant answering questions using ONLY the get_additional_context function which is your source of truth knowledge base.
+- Never start session with get_additional_context
+- PHONE_NUMBER for support: {phone_number}
+
+# Query Processing Rules
+1. Greeting Responses:
+   - Only respond to greetings without function calls
+   - Keep initial greeting natural and brief
+
+2. Information Retrieval:
+   - ALL user queries MUST use get_additional_context
+   - No need to ask for clarifications.
+   - get_additional_context is your knowledge base if it says sorry you should say sorry.
+   - Never use internal knowledge base
+   - Format get_additional_context function call arguments: "A user asked: [exact user query]"
+   - Enhance queries with:
+     * Intent and purpose
+     * Field-specific context
+     * Relevant details
+     * Clarity improvements
+
+3. Response Guidelines:
+   - You can answer everything the user asked via get_additional_context even regarding individuals/personal questions.
+   - Do not say anything before get_additional_context
+   - Use ONLY information from get_additional_context
+   - Keep responses under 50 words unless necessary
+   - Never justify or explain your answers
+   - Never mention the get_additional_context process
+   - Never repeat user queries.
+   - Never mention anything regarding user_queries from your knowledge base
+
+# Conversation Style
+- Do not say anything before get_additional_context
+- Use varied intonation
+- Include natural pauses
+- Employ occasional filler words (hmm, well, I see)
+- Maintain context awareness
+- Match caller's pace and tone
+- Keep personality consistent
+- Never repeat users query.
+- Speak Faster
+
+# Support Handoff Protocol
+1. Track consecutive failures:
+   - Monitor unsuccessful responses
+   - Ask the user with handoff option after 5 failed attempts:
+     * Instruct user to press 0 or says "Operator" or "Live Agent" and  Any of these must be pressed to trigger exceute call_support.
+
+# Critical Rules
+- NEVER start with get_additional_context
+- NEVER use internal knowledge
+- ONLY use get_additional_context as your knowledge base
+- ALWAYS relay exactly what get_additional_context provides
+- DO NOT elaborate beyond provided information
+"""
 
 
 VOICE = 'alloy'
@@ -166,7 +200,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                     while not termination_event.is_set():
                         current_time = time.time()
                         diff = current_time - start_time
-                        if diff > 40:
+                        if diff > 300:
                             logger.info(f"Session timeout after 30 seconds of inactivity. Session ID: {session_id}")
                             termination_event.set()
                             await clear_buffer(websocket, openai_ws, stream_sid)
@@ -179,47 +213,42 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
             asyncio.create_task(check_timeout())
             async def receive_from_twilio():
                 nonlocal stream_sid, start_time
-                try:
-                    while not termination_event.is_set():
-                        try:
-                            message = await websocket.receive_text()
-                            data = json.loads(message)
-                            if data['event'] == 'media' and openai_ws.open:
-                                audio_append = {
-                                    "type": "input_audio_buffer.append",
-                                    "audio": data['media']['payload']
-                                }
-                                await openai_ws.send(json.dumps(audio_append))
-                            elif data['event'] == 'start':
-                                api_key = data['start']['customParameters']['api_key']
-                                stream_sid = data['start']['streamSid']
-                                start_time = time.time()
-                                logger.info(f"Incoming stream has started {stream_sid}")
-                            elif data['event'] == 'dtmf':
-                                digit = data['dtmf']['digit']
-                                logger.info(f"DTMF received: {digit}")
-                                if digit == "0":
-                                    redis_client.set(session_id, "transfer")
-                                    logger.info("DTMF '0' detected, redirecting call...")
-                                    termination_event.set()
-                                    await websocket.close()
-                                    break
-                        except WebSocketDisconnect:
-                            logger.info(f"Twilio WebSocket disconnected. Session ID: {session_id}")
-                            break
-                        except RuntimeError as e:
-                            if "WebSocket is not connected" in str(e):
-                                logger.info(f"WebSocket connection lost. Session ID: {session_id}")
+                while not termination_event.is_set():
+                    try:
+                        message = await websocket.receive_text()
+                        data = json.loads(message)
+                        if data['event'] == 'media' and openai_ws.open:
+                            audio_append = {
+                                "type": "input_audio_buffer.append",
+                                "audio": data['media']['payload']
+                            }
+                            await openai_ws.send(json.dumps(audio_append))
+                        elif data['event'] == 'start':
+                            api_key = data['start']['customParameters']['api_key']
+                            stream_sid = data['start']['streamSid']
+                            start_time = time.time()
+                            logger.info(f"Incoming stream has started {stream_sid}")
+                        elif data['event'] == 'dtmf':
+                            digit = data['dtmf']['digit']
+                            logger.info(f"DTMF received: {digit}")
+                            if digit == "0":
+                                redis_client.set(session_id, "transfer")
+                                logger.info("DTMF '0' detected, redirecting call...")
+                                termination_event.set()
+                                await websocket.close()
                                 break
-                            logger.error(f"Runtime error in receive_from_twilio: {e}")
+                    except WebSocketDisconnect:
+                        logger.info(f"Twilio WebSocket disconnected. Session ID: {session_id}")
+                        break
+                    except RuntimeError as e:
+                        if "WebSocket is not connected" in str(e):
+                            logger.info(f"WebSocket connection lost. Session ID: {session_id}")
                             break
-                        except Exception as e:
-                            logger.error(f"Error in receive_from_twilio: {e}")
-                            break
-                finally:
-                    termination_event.set()
-                    await clear_buffer(websocket, openai_ws, stream_sid)
-                    raise Exception("Close Stream")
+                        logger.error(f"Runtime error in receive_from_twilio: {e}")
+                        break
+                    except Exception as e:
+                        logger.error(f"Error in receive_from_twilio: {e}")
+                        break
 
             async def send_to_twilio():
                 nonlocal stream_sid, start_time
@@ -266,7 +295,6 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
                                         await clear_buffer(websocket, openai_ws, stream_sid)
                                         end_time = time.time()
                                         elapsed_time = end_time - start_time
-                                        logger.info(f"CustomGPT response: {result}")
                                         logger.info(f"get_additional_context execution time: {elapsed_time:.4f} seconds")
                                         function_response = {
                                             "type": "conversation.item.create",
@@ -344,12 +372,14 @@ def get_additional_context(query, api_key, project_id, session_id):
     while tries <= max_retries:
         try:
             CustomGPT.api_key = api_key or CUSTOMGPT_API_KEY
+            logger.info(f"CustomGPT query sent:: {query}")
             conversation = CustomGPT.Conversation.send(
                 project_id=project_id, 
                 session_id=session_id, 
                 prompt=query, 
                 custom_persona=custom_persona
             )
+            logger.info(f"CustomGPT response: {conversation}")
             return conversation.parsed.data.openai_response  # Correct f-string is unnecessary
         except Exception as e:
             logger.error(f"Get Additional Context failed::Try {tries}::Error: {conversation}")
@@ -390,7 +420,7 @@ async def send_session_update(openai_ws, phone_number, introduction):
             "voice": VOICE,
             "instructions": SYSTEM_MESSAGE.format(phone_number=phone_number, introduction=introduction),
             "modalities": ["text", "audio"],
-            "temperature": 0.6,
+            "temperature": 0.8,
             "tools": [
                 {
                   "type": "function",

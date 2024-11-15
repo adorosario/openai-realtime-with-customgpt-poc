@@ -45,6 +45,7 @@ SYSTEM_MESSAGE = """
 2. Information Retrieval:
    - ALL user queries MUST use get_additional_context
    - No need to ask for clarifications.
+   - User query may contain human names so interpret them correctly.
    - get_additional_context is your knowledge base if it says sorry you should say sorry.
    - Never use internal knowledge base
    - Enhance user query:

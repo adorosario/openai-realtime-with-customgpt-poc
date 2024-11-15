@@ -118,7 +118,7 @@ async def handle_incoming_call(
     request: Request,
     background_tasks: BackgroundTasks,
     project_id: int,
-    api_key: Optional[str] = None,
+    api_key: Optional[str] = CUSTOMGPT_API_KEY,
     phone_number: Optional[str] = None,
     introduction: Optional[str] = DEFAULT_INTRO
 ):
@@ -212,7 +212,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
 
             asyncio.create_task(check_timeout())
             async def receive_from_twilio():
-                nonlocal stream_sid, start_time
+                nonlocal stream_sid, start_time, api_key
                 while not termination_event.is_set():
                     try:
                         message = await websocket.receive_text()
@@ -371,7 +371,8 @@ def get_additional_context(query, api_key, project_id, session_id):
     max_retries = 2
     while tries <= max_retries:
         try:
-            CustomGPT.api_key = api_key or CUSTOMGPT_API_KEY
+            print(api_key)
+            CustomGPT.api_key = api_key
             logger.info(f"CustomGPT query sent:: {query}")
             conversation = CustomGPT.Conversation.send(
                 project_id=project_id, 
@@ -393,7 +394,7 @@ def create_session(api_key, project_id, caller_number):
     max_retries = 2
     while tries <= max_retries:
         try:
-            CustomGPT.api_key = api_key or CUSTOMGPT_API_KEY
+            CustomGPT.api_key = api_key
             session = CustomGPT.Conversation.create(project_id=project_id, name=caller_number)
             logger.info(f"CustomGPT Session Created::{session.parsed.data}");
             return session.parsed.data.session_id

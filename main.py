@@ -49,7 +49,7 @@ SYSTEM_MESSAGE = """
    - get_additional_context is your knowledge base if it says sorry you should say sorry.
    - Never use internal knowledge base
    - Enhance user query:
-       * Format get_additional_context function call arguments: "A user asked: [include the exact transcription of the user's request.] 
+       * Function call to  get_additional_context function call arguments query must start with "A user asked: [include the exact transcription of the user's request]".
        * Expand on the intent and purpose behind the question, adding depth, specificity, and clarity.
        * Tailor the information as if the user were asking an expert in the relevant field, and include any relevant contextual details that would help make the request more comprehensive.
        * The goal is to enhance the user query, making it clearer and more informative while maintaining the original intent.

@@ -183,7 +183,7 @@ async def handle_media_stream(websocket: WebSocket, project_id: int, session_id:
     termination_event = asyncio.Event()
 
     async with websockets.connect(
-        'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01',
+        'wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17',
         extra_headers={
             "Authorization": f"Bearer {OPENAI_API_KEY}",
             "OpenAI-Beta": "realtime=v1"

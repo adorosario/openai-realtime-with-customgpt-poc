@@ -113,6 +113,44 @@ if not OPENAI_API_KEY:
 async def index_page():
     return "<h1>Twilio Media Stream Server is running!</h1>"
 
+@app.api_route("/incoming-message", methods=["GET", "POST"])
+async def handle_incoming_message(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    project_id: int,
+    api_key: Optional[str] = CUSTOMGPT_API_KEY,
+    phone_number: Optional[str] = None
+):
+    form_data = await request.form() if request.method == "POST" else request.query_params
+    caller_number = form_data.get('From', 'Unknown')
+    twilio_number = form_data.get('To', 'Unknown')
+    logger.info(f"Sender: {caller_number}")
+    message = form_data.get('Body', 'Unknown')
+    logger.info(f"Message: {message}")
+    session_id = create_session(api_key, project_id, caller_number)
+    logger.info(f"Project::{project_id}")
+
+    async def process_and_respond():
+        CustomGPT.api_key = api_key
+        logger.info(f"CustomGPT query sent:: {message}")
+        instructions = "NOTE: Ensure the response is less than 1600 characters keep the answer short and concise."
+        conversation = CustomGPT.Conversation.send(
+            project_id=project_id,
+            session_id=session_id,
+            prompt=message,
+            custom_persona=instructions
+        )
+        response = conversation.parsed.data.openai_response
+        
+        client.messages.create(
+            body=response,
+            from_=twilio_number,
+            to=caller_number
+        )
+
+    background_tasks.add_task(process_and_respond)
+    return {"message": "Processing your message"}
+
 @app.api_route("/incoming-call", methods=["GET", "POST"])
 async def handle_incoming_call(
     request: Request,
@@ -371,7 +409,6 @@ def get_additional_context(query, api_key, project_id, session_id):
     max_retries = 2
     while tries <= max_retries:
         try:
-            print(api_key)
             CustomGPT.api_key = api_key
             logger.info(f"CustomGPT query sent:: {query}")
             conversation = CustomGPT.Conversation.send(
